@@ -92,5 +92,39 @@ def test_me_rejects_token_for_unknown_user(client, token):
     assert client.get("/users/me", headers=bearer(ghost)).status_code == 401
 
 
+def test_usernames_are_case_insensitive(client, register):
+    r = register(username="Alice")
+    assert r.status_code == 201
+    assert r.json()["username"] == "alice"
+    assert register(username="ALICE").status_code == 409
+    r = client.post("/token", data={"username": "aLiCe", "password": "correct-horse"})
+    assert r.status_code == 200
+    assert client.get("/users/me", headers=bearer(r.json()["access_token"])).json()["username"] == "alice"
+
+
+def test_token_endpoint_is_rate_limited(client, register):
+    register()
+    creds = {"username": "alice", "password": "wrong-password"}
+    for _ in range(main.LOGIN_ATTEMPTS_PER_MINUTE):
+        assert client.post("/token", data=creds).status_code == 401
+    r = client.post("/token", data=creds)
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) > 0
+    # even correct credentials are refused until the window passes
+    assert client.post("/token", data={"username": "alice", "password": "correct-horse"}).status_code == 429
+
+
+def test_rate_limit_window_slides(client, register, monkeypatch):
+    register()
+    now = [1000.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: now[0])
+    creds = {"username": "alice", "password": "wrong-password"}
+    for _ in range(main.LOGIN_ATTEMPTS_PER_MINUTE):
+        client.post("/token", data=creds)
+    assert client.post("/token", data=creds).status_code == 429
+    now[0] += 61
+    assert client.post("/token", data={"username": "alice", "password": "correct-horse"}).status_code == 200
+
+
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}

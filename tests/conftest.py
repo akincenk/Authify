@@ -14,6 +14,7 @@ import main  # noqa: E402
 def client():
     if os.path.exists(main.DB_PATH):
         os.remove(main.DB_PATH)
+    main._attempts.clear()
     with TestClient(main.app) as c:  # runs lifespan -> creates the table
         yield c
 
